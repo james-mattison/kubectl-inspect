@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+
+import json
+import argparse
+import subprocess
+
+the_help = """
+usage: kubectl inspect <pod_name> [ -g, --grep ]
+(use -g for inexact matches)
+"""
+
+green = lambda s : "\033[0;32m" + str(s) + "\033[;0m"
+red = lambda s : "\033[0;31m" + str(s) + "\033[;0m"
+yellow = lambda s : "\033[0;33m" + str(s) + "\033[;0m"
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument("pod_name", action = "store", help = "Name of pod to inspect", nargs = "*",  default = list())
+parser.add_argument("-g", "--grep", action = "store_true", default = False, help = "Instead of an exact match, match the first pod found that has pod_name in its name")
+
+
+def get_js(*pod_names, grep: bool = False):
+    if not grep:
+        loaded = []
+        try:
+            for pod in list(pod_names):
+                targ = subprocess.run(f"kubectl get po '{pod}' -o json", shell = True, stdout = subprocess.PIPE)
+                if targ.returncode == 0:
+                    loaded.append(json.loads(targ.stdout.decode(errors = 'ignore')))
+            return loaded
+
+        except json.JSONDecodeError as e:
+            print(red(f"Fatal: could not load info about {pod}"))
+            raise
+    else:
+        pods = subprocess.getoutput(f"kubectl get po | grep '{pod_name}' | awk '{{ print $1 }}' |  head -1").split("\n")
+        return [get_js(*pods, grep = False) for pod in pods]
+
+def print_name(js: dict):
+    print(f"Name: {js['metadata']['name']}")
+
+def print_where_running(js: dict):
+    print(f"Running on Node: {js['spec']['nodeName']}")
+
+def print_pod_ip(js: dict):
+    print(f"Pod IP: {js['status']['podIP']}")
+
+def print_host_ip(js: dict):
+    print(f"Host IP: {js['status']['hostIP']}")
+
+def print_state(js: dict):
+    is_run = True if js['status']['phase'] == "Running" else False
+
+    if is_run:
+        print(f"State: {green(js['status']['phase'])}")
+    else:
+        print(f"State: {red(js['status']['phase'])}")
+    print(f"Containers: ")
+    for container in js['status']['containerStatuses']:
+        print(" - {:10}: {:30}".format(list(container['state'].keys())[0], container['name']))
+
+def print_labels(js: dict):
+    print("Labels:")
+    for k,v in js['metadata']['labels'].items():
+        print(f" - {k}={v}")
+
+if __name__ == "__main__":
+    args = parser.parse_args()
+    if not args.pod_name:
+        print(the_help)
+        print(red("FATAL: missing pod_name!"))
+        quit(1)
+    print(f"processing with  {' '.join(args.pod_name)}")
+    obs = get_js(*args.pod_name, args.grep)
+
+    print(f"got obs {obs}")
+    for ob in obs:
+        if not ob:
+            print(f"Fatal: unable to select any pod matching {args.pod_name}. Use -g for inexact regex matches")
+            quit(1)
+        print_name(ob)
+        print_state(ob)
+        print_where_running(ob)
+        print_pod_ip(ob)
+        print_host_ip(ob)
+        print_labels(ob)
+        print_where_running(ob)
